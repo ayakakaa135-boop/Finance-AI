@@ -14,7 +14,31 @@ from io import StringIO
 
 load_dotenv()
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+def _get_api_key():
+    """Read API key from .env locally OR from Streamlit secrets on Cloud."""
+    # 1. Try environment variable first (.env file / system env)
+    key = os.getenv("GEMINI_API_KEY")
+    if key:
+        return key
+    # 2. Try Streamlit secrets (Streamlit Cloud deployment)
+    try:
+        import streamlit as st
+        key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("gemini_api_key")
+        if key:
+            return key
+    except Exception:
+        pass
+    return None
+
+_api_key = _get_api_key()
+if not _api_key:
+    raise RuntimeError(
+        "GEMINI_API_KEY not found.\n"
+        "• Locally: add GEMINI_API_KEY=AIza... to your .env file\n"
+        "• Streamlit Cloud: go to Settings → Secrets and add:\n"
+        "  GEMINI_API_KEY = \"AIza...\""
+    )
+genai.configure(api_key=_api_key)
 
 # Try models in order — handles regional availability differences
 _MODEL_CANDIDATES = [
@@ -25,34 +49,8 @@ _MODEL_CANDIDATES = [
     "gemini-1.0-pro",
 ]
 
-def _get_model():
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY is missing. "
-            "Add it to Streamlit secrets: Settings → Secrets → GEMINI_API_KEY = \"your_key\""
-        )
-    last_error = None
-    for name in _MODEL_CANDIDATES:
-        try:
-            m = genai.GenerativeModel(name)
-            # lightweight probe — no actual content generation
-            m.count_tokens("test")
-            return m
-        except Exception as e:
-            last_error = e
-            continue
-    # If count_tokens probe failed for all, still try to return the first model
-    # (some regions block count_tokens but allow generate_content)
-    try:
-        return genai.GenerativeModel(_MODEL_CANDIDATES[0])
-    except Exception:
-        raise RuntimeError(
-            f"Could not initialize any Gemini model. Last error: {last_error}. "
-            "Check your GEMINI_API_KEY in Streamlit secrets."
-        )
-
-model = _get_model()
+# Instantiate model — no probing, GenerativeModel() itself never raises
+model = genai.GenerativeModel(_MODEL_CANDIDATES[0])
 
 EXTRACTION_PROMPT = """
 You are a financial document analyzer. Analyze this document (invoice, bank statement, receipt, or transaction list) and extract ALL transactions.
